@@ -1,0 +1,28 @@
+# Visual Studio files
+.vs/
+x64/
+Debug/
+Release/
+*.user
+*.suo
+*.sdf
+*.opensdf
+*.db
+*.opendb
+*.VC.db
+*.VC.VC.opendb
+
+# Build outputs
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.obj
+*.log
+
+# NuGet packages
+packages/
+*.nupkg
+
+# Visual Studio cache/options directory
+.vs/
