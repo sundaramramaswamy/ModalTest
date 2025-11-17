@@ -29,11 +29,9 @@ void CloseModal();
 // Global variables yes
 HWND g_parentHwnd = nullptr;
 DesktopPopupSiteBridge g_popup = nullptr;
-AppWindow g_modalAppWindow = nullptr;
 ContentIsland g_modalIsland = nullptr;
 ContentIsland g_parentIsland = nullptr;
 DesktopChildSiteBridge g_parentSiteBridge = nullptr;
-bool g_modalVisible = false;
 
 void CreateModalWindow()
 {
@@ -67,136 +65,97 @@ void CreateModalWindow()
     g_popup = DesktopPopupSiteBridge::Create(g_parentIsland);
     g_popup.Connect(g_modalIsland);
 
-    // Get AppWindow from the popup
-    g_modalAppWindow = AppWindow::GetFromWindowId(g_popup.WindowId());
-    
-    if (g_modalAppWindow)
-    {
-        auto presenter = OverlappedPresenter::Create();
-        
-        // Configure as modal - THIS IS THE KEY PART WE'RE TESTING
-        presenter.IsModal(true);
-        presenter.SetBorderAndTitleBar(true, true);
-        
-        g_modalAppWindow.SetPresenter(presenter);
-        g_modalAppWindow.Title(L"Modal Test Window - Hello from Modal!");
-        
-        // Handle window closing event - MATCH RNW BEHAVIOR
-        g_modalAppWindow.Closing([](auto sender, auto args) {
-            OutputDebugStringW(L"Modal X button clicked - Closing event fired\n");
-            args.Cancel(true); // Prevent default close - JUST LIKE RNW
-            OutputDebugStringW(L"Calling CloseModal() to DESTROY modal (close island and popup)\n");
-            
-            // Call CloseModal to destroy everything (simulates RNW destructor)
-            CloseModal();
+    auto presenter = OverlappedPresenter::Create();
+    // Configure as modal - THIS IS THE KEY PART WE'RE TESTING
+    presenter.IsModal(true);
+    presenter.SetBorderAndTitleBar(true, true);
+
+    // Get popup's AppWindow
+    auto modalAppWindow = AppWindow::GetFromWindowId(g_popup.WindowId());
+    assert(modalAppWindow);
+    modalAppWindow.SetPresenter(presenter);
+    modalAppWindow.Title(L"Modal Test Window - Hello from Modal!");
+
+    // Handle window closing event - MATCH RNW BEHAVIOR
+    modalAppWindow.Closing([](auto sender, auto args) {
+        OutputDebugStringW(L"Modal X button clicked - Closing event fired\n");
+        args.Cancel(true); // Prevent default close - JUST LIKE RNW
+        OutputDebugStringW(L"Calling CloseModal() to DESTROY modal (close island and popup)\n");
+
+        // Call CloseModal to destroy everything (simulates RNW destructor)
+        CloseModal();
         });
-        
-        g_modalAppWindow.Changed([](auto sender, auto args) {
-            if (args.DidVisibilityChange() && !sender.IsVisible())
-            {
-                OutputDebugStringW(L"Modal window became invisible\n");
-            }
-        });
-        
-        // Resize to a reasonable size
-        g_modalAppWindow.ResizeClient({400, 300});
-        
-        // Center the modal on the parent window
-        if (g_parentHwnd)
+
+    modalAppWindow.Changed([](auto sender, auto args) {
+        if (args.DidVisibilityChange() && !sender.IsVisible())
         {
-            RECT parentRect;
-            GetWindowRect(g_parentHwnd, &parentRect);
-            int parentWidth = parentRect.right - parentRect.left;
-            int parentHeight = parentRect.bottom - parentRect.top;
-            
-            int modalX = parentRect.left + (parentWidth - 400) / 2;
-            int modalY = parentRect.top + (parentHeight - 300) / 2;
-            
-            g_modalAppWindow.Move({modalX, modalY});
+            OutputDebugStringW(L"Modal window became invisible\n");
         }
-        
-        OutputDebugStringW(L"Modal window created and positioned\n");
+        });
+
+    // Resize to a reasonable size
+    modalAppWindow.ResizeClient({ 400, 300 });
+
+    // Center the modal on the parent window
+    if (g_parentHwnd)
+    {
+        RECT parentRect;
+        GetWindowRect(g_parentHwnd, &parentRect);
+        int parentWidth = parentRect.right - parentRect.left;
+        int parentHeight = parentRect.bottom - parentRect.top;
+
+        int modalX = parentRect.left + (parentWidth - 400) / 2;
+        int modalY = parentRect.top + (parentHeight - 300) / 2;
+
+        modalAppWindow.Move({ modalX, modalY });
     }
+
+    OutputDebugStringW(L"Modal window created and positioned\n");
 }
 
 void ShowModal()
 {
     CreateModalWindow();
-    
-    if (g_popup && !g_modalVisible)
-    {
-        g_popup.Show();
-        
-        // Also explicitly show the AppWindow
-        if (g_modalAppWindow)
-        {
-            g_modalAppWindow.Show();
-        }
-        
-        g_modalVisible = true;
-        OutputDebugStringW(L"Modal shown\n");
-        
-        // Debug: Check if window is actually visible
-        if (g_modalAppWindow)
-        {
-            WCHAR debugMsg[256];
-            swprintf_s(debugMsg, L"AppWindow IsVisible: %d\n", g_modalAppWindow.IsVisible());
-            OutputDebugStringW(debugMsg);
-        }
-    }
+    assert(g_popup && !g_popup.IsVisible());
+    // Show bridge to show popup.
+    g_popup.Show();
+    auto modalAppWindow = AppWindow::GetFromWindowId(g_popup.WindowId());
+    // Make shown popup modal.  Presenter is associated to AppWindow so calling bridge.Show isn’t enough.
+    modalAppWindow.Show();
+    OutputDebugStringW(L"Modal shown\n");
+    // Without this parent window still has focus!
+    SetForegroundWindow(winrt::Microsoft::UI::GetWindowFromWindowId(g_popup.WindowId()));
 }
 
 void CloseModal()
 {
-    if (g_popup && g_modalVisible)
+    if (g_popup)
     {
         OutputDebugStringW(L"=== TEST: Simulating RNW destructor - DESTROYING modal ===\n");
-        
-        // Hide the popup
-        if (g_popup)
+
+        // [OPTIONAL] Close the island and hide the popup.
+        if (g_popup.IsVisible())
         {
-            OutputDebugStringW(L"Step 0: Hiding popup...\n");
-            g_popup.Hide();
-            OutputDebugStringW(L"Popup hidden\n");
-        }
-        
-        // Re-enable parent window
-        if (g_parentHwnd)
-        {
-            EnableWindow(g_parentHwnd, TRUE);
-            SetForegroundWindow(g_parentHwnd);
-            OutputDebugStringW(L"Parent window re-enabled\n");
-        }
-        
-		// Close popup desktop child site bridge
-        if (g_popup)
-        {
-            OutputDebugStringW(L"Step 1: Closing popup...\n");
-            g_popup.Close();
-            OutputDebugStringW(L"Popup closed\n");
-            g_popup = nullptr;
-        }
-        
-        //  Close modal island
-        if (g_modalIsland)
-        {
-            OutputDebugStringW(L"Step 2: Closing modal island...\n");
+            OutputDebugStringW(L"Step 0: Closing modal island...\n");
             g_modalIsland.Close();
             OutputDebugStringW(L"Modal island closed\n");
             g_modalIsland = nullptr;
+
+            OutputDebugStringW(L"Step 1: Hiding popup...\n");
+            g_popup.Hide();
+            OutputDebugStringW(L"Popup hidden\n");
         }
 
+        // Destroy app window and close bridge.
+        auto modalAppWindow = AppWindow::GetFromWindowId(g_popup.WindowId());
+        // This automatically hides the popup and resumes parent window to receive inputs.
+        modalAppWindow.Destroy();
+        g_popup.Close();
+        g_popup = nullptr;
+        OutputDebugStringW(L"Popup destroyed\n");
 
-        // Step 3: Close modal AppWindow
-        if (g_modalAppWindow)
-        {
-            OutputDebugStringW(L"Step 3: Nulling AppWindow...\n");
-            // AppWindow is already closed when popup closes
-            g_modalAppWindow = nullptr;
-        }
-        
-        g_modalVisible = false;
-        OutputDebugStringW(L"=== Modal fully DESTROYED ===\n");
+        // Set focus back to parent window
+        SetForegroundWindow(g_parentHwnd);
     }
 }
 
@@ -243,11 +202,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         break;
         
     case WM_DESTROY:
-        if (g_popup)
-        {
-            g_popup.Close();
-            g_popup = nullptr;
-        }
+        CloseModal();
         PostQuitMessage(0);
         break;
         
@@ -259,20 +214,23 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow)
 {
-    // Initialize Windows App SDK
+    // Initialize WinRT (and thereby COM).
+    init_apartment();
+
+    // Initialize Windows App SDK.  This is needed for unpackaged apps.
+    // Request for Windows App SDK 1.7+.
     const UINT32 majorMinorVersion{ 0x00010007 }; // 1.7
     PCWSTR versionTag{ L"" };
     const PACKAGE_VERSION minVersion{ 250401001 }; // 1.7.250401001
-    
+
+    // COM should be initialized before this call; refer MddBootstrapInitialize2's documentation.
+    // Assume client has installed the Windows App SDK.
     HRESULT hr = MddBootstrapInitialize2(majorMinorVersion, versionTag, minVersion, MddBootstrapInitializeOptions_None);
     if (FAILED(hr))
     {
         MessageBoxW(nullptr, L"Failed to initialize Windows App SDK", L"Error", MB_ICONERROR);
         return 1;
     }
-    
-    // Initialize WinRT
-    init_apartment();
     
     // Create DispatcherQueue on the current thread (required for Compositor)
     auto controller = DispatcherQueueController::CreateOnCurrentThread();
@@ -296,23 +254,27 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow)
     
     if (!g_parentHwnd)
         return 1;
-    
-    ShowWindow(g_parentHwnd, nCmdShow);
-    
+
     // Create parent ContentIsland connected to the main window
     // This is required for DesktopPopupSiteBridge::Create()
     auto compositor = Compositor();
     auto parentVisual = compositor.CreateSpriteVisual();
-    parentVisual.Size({ 800, 600 });
+    parentVisual.Brush(compositor.CreateColorBrush(winrt::Windows::UI::Colors::PapayaWhip()));
+    parentVisual.RelativeSizeAdjustment({ 1.0f, 1.0f });
     g_parentIsland = ContentIsland::Create(parentVisual);
     
     // Connect the island to the parent HWND using DesktopChildSiteBridge
     auto parentWindowId = winrt::Microsoft::UI::GetWindowIdFromWindow(g_parentHwnd);
     g_parentSiteBridge = DesktopChildSiteBridge::Create(compositor, parentWindowId);
     g_parentSiteBridge.Connect(g_parentIsland);
-    
+    // Offset in Y to not obscure the Win32 buttons.
+    g_parentSiteBridge.MoveAndResize({0, 50, 600, 350});
+    g_parentSiteBridge.Show();
     OutputDebugStringW(L"Parent ContentIsland created and connected to HWND\n");
     
+    ShowWindow(g_parentHwnd, nCmdShow);
+    UpdateWindow(g_parentHwnd);
+
     // Message loop
     MSG msg = {};
     while (GetMessage(&msg, nullptr, 0, 0))
